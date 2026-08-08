@@ -1,0 +1,10 @@
+langchain-community 
+langraph
+langchain
+sentence-transformers
+faiss-cpu
+transformers
+torch 
+accelerate 
+pydantic
+jsonschema
