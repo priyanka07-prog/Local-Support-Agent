@@ -15,11 +15,11 @@ result = app.invoke(
 print("\nClassification:")
 print(result["classification"])
 
-print("\nRetrieved documents:")
+print("\nAnswer:")
+print(result["answer"])
 
-for document in result["retrieved_documents"]:
-    print("\nSource:", document["source"])
-    print("Score:", round(document["score"], 4))
-    print("Content:")
-    print(document["content"][:300])
-    print("-" * 60)
+print("\nSources:")
+
+for source in result.get("sources", []):
+    print("\nFile:", source["filename"])
+    print("Excerpt:", source["excerpt"])

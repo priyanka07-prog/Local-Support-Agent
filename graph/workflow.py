@@ -1,9 +1,10 @@
 from typing import Literal
-
 from langgraph.graph import StateGraph, START, END
-
 from graph.state import SupportState
-from graph.nodes import triage_node, retrieve_node, generate_node
+from graph.nodes import (triage_node,
+    retrieve_node,
+    generate_node,
+    verify_node)
 
 
 def route_after_triage(
@@ -50,11 +51,14 @@ def out_of_scope_node(state: SupportState) -> SupportState:
 
 
 def answerable_node(state: SupportState) -> SupportState:
-    """Retrieve relevant knowledge-base documents."""
+    """Regenerate the answer once failed verification."""
     
-    state = retrieve_node(state)
-    state = generate_node(state)
-    return state
+    retry_count = state.get("retry_count",0) + 1
+    state = {
+        **state,
+        "retry_count":retry_count,
+    }
+    return generate_node(state)
 
 
 def build_workflow():
@@ -79,8 +83,33 @@ def build_workflow():
         },
     )
 
-    graph.add_edge("answerable", END)
+    graph.add_edge("answerable", "verify")
+    
+    graph.add_conditional_edges(
+        "verify",
+        route_after_verification,
+        {
+            "pass" : END,
+            "retry" : "retry_generate",
+            "fail" : END
+        },
+    )
+    graph.add_edge("retry_generate", "verify")
     graph.add_edge("clarification", END)
     graph.add_edge("out_of_scope", END)
 
     return graph.compile()
+def route_after_verification(state: SupportState) -> str:
+    """
+    Decide whether the answer should be accepted or regenerated.
+    """
+
+    if state.get("verification_passed", False):
+        return "pass"
+
+    retry_count = state.get("retry_count", 0)
+
+    if retry_count < 1:
+        return "retry"
+
+    return "fail"

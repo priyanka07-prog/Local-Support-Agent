@@ -138,3 +138,63 @@ def generate_node(state: SupportState) -> SupportState:
         "answer": answer,
         "sources": sources,
     }
+def verify_node(state: SupportState) -> SupportState:
+    """
+    Verify that the generated answer is supported by the
+    retrieved knowledge-base documents.
+    """
+
+    answer = state.get("answer", "").strip()
+    documents = state.get("retrieved_documents", [])
+
+    if not answer:
+        return {
+            **state,
+            "verification_passed": False,
+            "verification_reason": "The generated answer is empty.",
+        }
+
+    if not documents:
+        return {
+            **state,
+            "verification_passed": False,
+            "verification_reason": "No supporting knowledge-base documents were retrieved.",
+        }
+
+    # Combine retrieved evidence.
+    evidence = " ".join(
+        document["content"].lower()
+        for document in documents
+    )
+
+    # Simple grounding check:
+    # Look for meaningful words from the answer in the evidence.
+    answer_words = {
+        word.strip(".,!?;:()[]{}\"'")
+        for word in answer.lower().split()
+        if len(word.strip(".,!?;:()[]{}\"'")) > 4
+    }
+
+    evidence_words = {
+        word.strip(".,!?;:()[]{}\"'")
+        for word in evidence.split()
+        if len(word.strip(".,!?;:()[]{}\"'")) > 4
+    }
+
+    overlap = answer_words.intersection(evidence_words)
+
+    grounding_ratio = (
+        len(overlap) / len(answer_words)
+        if answer_words
+        else 0
+    )
+
+    passed = grounding_ratio >= 0.25
+
+    return {
+        **state,
+        "verification_passed": passed,
+        "verification_reason": (
+            f"Grounding word-overlap ratio: {grounding_ratio:.2f}"
+        ),
+    }
