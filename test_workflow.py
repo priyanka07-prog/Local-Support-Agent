@@ -1,3 +1,4 @@
+from graph import workflow
 from graph.workflow import build_workflow
 
 
@@ -11,12 +12,29 @@ result = app.invoke(
     }
 )
 
-
 print("\nClassification:")
-print(result["classification"])
+print(result.get("classification"))
 
 print("\nAnswer:")
-print(result["answer"])
+print(result.get("answer"))
+
+print("\nVerification:")
+print(result.get("verification_passed"))
+
+print("\nVerification reason:")
+print(result.get("verification_reason"))
+
+print("\nConfidence:")
+print(result.get("confidence"))
+
+print("\nRetry count:")
+print(result.get("retry_count", 0))
+
+print("\nRequires human:")
+print(result.get("requires_human"))
+
+print("\nReason:")
+print(result.get("reason"))
 
 print("\nSources:")
 

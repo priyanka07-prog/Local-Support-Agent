@@ -1,3 +1,5 @@
+from unittest import result
+
 from graph.state import SupportState
 from graph.generator import LocalGenerator
 
@@ -147,28 +149,50 @@ def verify_node(state: SupportState) -> SupportState:
     answer = state.get("answer", "").strip()
     documents = state.get("retrieved_documents", [])
 
+    # Check 1: Answer exists
     if not answer:
         return {
             **state,
             "verification_passed": False,
             "verification_reason": "The generated answer is empty.",
+            "confidence": 0.0,
         }
 
+    # Check 2: Evidence exists
     if not documents:
         return {
             **state,
             "verification_passed": False,
-            "verification_reason": "No supporting knowledge-base documents were retrieved.",
+            "verification_reason": (
+                "No knowledge-base evidence was retrieved."
+            ),
+            "confidence": 0.0,
         }
 
-    # Combine retrieved evidence.
+    # Check 3: Retrieved documents have usable content
+    valid_documents = [
+        document
+        for document in documents
+        if document.get("content", "").strip()
+    ]
+
+    if not valid_documents:
+        return {
+            **state,
+            "verification_passed": False,
+            "verification_reason": (
+                "Retrieved documents do not contain usable evidence."
+            ),
+            "confidence": 0.0,
+        }
+
+    # Combine the retrieved evidence.
     evidence = " ".join(
         document["content"].lower()
-        for document in documents
+        for document in valid_documents
     )
 
-    # Simple grounding check:
-    # Look for meaningful words from the answer in the evidence.
+    # Normalize answer words.
     answer_words = {
         word.strip(".,!?;:()[]{}\"'")
         for word in answer.lower().split()
@@ -181,20 +205,74 @@ def verify_node(state: SupportState) -> SupportState:
         if len(word.strip(".,!?;:()[]{}\"'")) > 4
     }
 
+    # Avoid division by zero.
+    if not answer_words:
+        return {
+            **state,
+            "verification_passed": False,
+            "verification_reason": (
+                "The answer does not contain enough meaningful content."
+            ),
+            "confidence": 0.0,
+        }
+
     overlap = answer_words.intersection(evidence_words)
 
-    grounding_ratio = (
-        len(overlap) / len(answer_words)
-        if answer_words
-        else 0
+    grounding_ratio = len(overlap) / len(answer_words)
+
+    # Use the retrieval scores as another signal.
+    retrieval_scores = [
+        float(document.get("score", 0.0))
+        for document in valid_documents
+    ]
+
+    best_retrieval_score = max(retrieval_scores)
+
+    # Calculate a simple confidence score.
+    confidence = (
+        0.7 * grounding_ratio
+        + 0.3 * max(0.0, min(1.0, best_retrieval_score))
     )
 
-    passed = grounding_ratio >= 0.25
+    confidence = round(
+        max(0.0, min(1.0, confidence)),
+        2,
+    )
+
+    # Minimum grounding requirement.
+    passed = (
+        grounding_ratio >= 0.25
+        and best_retrieval_score >= 0.20
+    )
+
+    if passed:
+        reason = (
+            f"Answer is supported by retrieved evidence. "
+            f"Grounding={grounding_ratio:.2f}, "
+            f"retrieval_score={best_retrieval_score:.2f}."
+        )
+    else:
+        reason = (
+            f"Insufficient evidence support. "
+            f"Grounding={grounding_ratio:.2f}, "
+            f"retrieval_score={best_retrieval_score:.2f}."
+        )
 
     return {
         **state,
         "verification_passed": passed,
-        "verification_reason": (
-            f"Grounding word-overlap ratio: {grounding_ratio:.2f}"
+        "verification_reason": reason,
+        "confidence": confidence,
+    }
+def final_response_node(state: SupportState) -> SupportState:
+    """Prepare the final structured response."""
+
+    return {
+        **state,
+        "requires_human": state.get("requires_human", False),
+        "reason": state.get(
+            "reason",
+            state.get("verification_reason", ""),
         ),
+        "warnings": state.get("warnings", []),
     }
