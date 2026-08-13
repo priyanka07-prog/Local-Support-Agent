@@ -108,7 +108,6 @@ def retrieve_node(state: SupportState) -> SupportState:
     }
 generator = LocalGenerator()
 
-
 def generate_node(state: SupportState) -> SupportState:
     """Generate a grounded answer from the retrieved documents."""
 
@@ -118,7 +117,10 @@ def generate_node(state: SupportState) -> SupportState:
     if not documents:
         return {
             **state,
-            "answer": "I could not find relevant information in the knowledge base.",
+            "answer": (
+                "I could not find relevant information "
+                "in the knowledge base."
+            ),
             "sources": [],
         }
 
@@ -143,13 +145,20 @@ def generate_node(state: SupportState) -> SupportState:
 def verify_node(state: SupportState) -> SupportState:
     """
     Verify that the generated answer is supported by the
-    retrieved knowledge-base documents.
+    retrieved knowledge-base evidence.
+
+    This verifier checks:
+    1. The answer exists.
+    2. Evidence exists.
+    3. The answer has meaningful overlap with the evidence.
+    4. Obvious contradictions are detected.
     """
 
     answer = state.get("answer", "").strip()
     documents = state.get("retrieved_documents", [])
 
     # Check 1: Answer exists
+
     if not answer:
         return {
             **state,
@@ -159,6 +168,7 @@ def verify_node(state: SupportState) -> SupportState:
         }
 
     # Check 2: Evidence exists
+
     if not documents:
         return {
             **state,
@@ -169,33 +179,20 @@ def verify_node(state: SupportState) -> SupportState:
             "confidence": 0.0,
         }
 
-    # Check 3: Retrieved documents have usable content
-    valid_documents = [
-        document
-        for document in documents
-        if document.get("content", "").strip()
-    ]
+    # Combine evidence
 
-    if not valid_documents:
-        return {
-            **state,
-            "verification_passed": False,
-            "verification_reason": (
-                "Retrieved documents do not contain usable evidence."
-            ),
-            "confidence": 0.0,
-        }
-
-    # Combine the retrieved evidence.
     evidence = " ".join(
-        document["content"].lower()
-        for document in valid_documents
-    )
+        document.get("content", "")
+        for document in documents
+    ).lower()
 
-    # Normalize answer words.
+    answer_lower = answer.lower()
+
+    # Check 3: Meaningful word overlap
+
     answer_words = {
         word.strip(".,!?;:()[]{}\"'")
-        for word in answer.lower().split()
+        for word in answer_lower.split()
         if len(word.strip(".,!?;:()[]{}\"'")) > 4
     }
 
@@ -205,7 +202,6 @@ def verify_node(state: SupportState) -> SupportState:
         if len(word.strip(".,!?;:()[]{}\"'")) > 4
     }
 
-    # Avoid division by zero.
     if not answer_words:
         return {
             **state,
@@ -220,40 +216,121 @@ def verify_node(state: SupportState) -> SupportState:
 
     grounding_ratio = len(overlap) / len(answer_words)
 
-    # Use the retrieval scores as another signal.
-    retrieval_scores = [
-        float(document.get("score", 0.0))
-        for document in valid_documents
+    # Check 4: Detect obvious contradictions
+
+    contradiction_detected = False
+    contradiction_reason = ""
+
+    positive_patterns = [
+        "yes",
+        "can create",
+        "can do",
+        "is allowed",
+        "are allowed",
+        "has permission",
+        "have permission",
+        "is permitted",
+        "are permitted",
     ]
 
-    best_retrieval_score = max(retrieval_scores)
+    negative_patterns = [
+        "no",
+        "cannot",
+        "can't",
+        "not allowed",
+        "not permitted",
+        "does not have permission",
+        "do not have permission",
+        "cannot create",
+    ]
 
-    # Calculate a simple confidence score.
+    answer_positive = any(
+        pattern in answer_lower
+        for pattern in positive_patterns
+    )
+
+    answer_negative = any(
+        pattern in answer_lower
+        for pattern in negative_patterns
+    )
+
+    evidence_positive = any(
+        pattern in evidence
+        for pattern in positive_patterns
+    )
+
+    evidence_negative = any(
+        pattern in evidence
+        for pattern in negative_patterns
+    )
+
+    # If the answer and evidence clearly disagree,
+    # verification must fail.
+    if answer_positive and evidence_negative:
+        contradiction_detected = True
+        contradiction_reason = (
+            "The answer appears to contradict the retrieved evidence."
+        )
+
+    elif answer_negative and evidence_positive:
+        contradiction_detected = True
+        contradiction_reason = (
+            "The answer appears to contradict the retrieved evidence."
+        )
+
+    # Retrieval score
+
+    retrieval_scores = [
+        float(document.get("score", 0.0))
+        for document in documents
+    ]
+
+    best_retrieval_score = max(
+        retrieval_scores,
+        default=0.0,
+    )
+
+    # Confidence
+
     confidence = (
         0.7 * grounding_ratio
-        + 0.3 * max(0.0, min(1.0, best_retrieval_score))
+        + 0.3 * max(
+            0.0,
+            min(1.0, best_retrieval_score),
+        )
     )
+
+    # Contradictions should heavily reduce confidence.
+    if contradiction_detected:
+        confidence *= 0.2
 
     confidence = round(
         max(0.0, min(1.0, confidence)),
         2,
     )
 
-    # Minimum grounding requirement.
+    # Final verification decision
+
     passed = (
         grounding_ratio >= 0.25
         and best_retrieval_score >= 0.20
+        and not contradiction_detected
     )
 
-    if passed:
+    if contradiction_detected:
+        reason = contradiction_reason
+
+    elif passed:
         reason = (
-            f"Answer is supported by retrieved evidence. "
+            "Answer is supported by the retrieved evidence. "
             f"Grounding={grounding_ratio:.2f}, "
             f"retrieval_score={best_retrieval_score:.2f}."
         )
+
     else:
         reason = (
-            f"Insufficient evidence support. "
+            "The answer does not have sufficient support from "
+            "the retrieved knowledge-base evidence. "
             f"Grounding={grounding_ratio:.2f}, "
             f"retrieval_score={best_retrieval_score:.2f}."
         )
@@ -264,15 +341,42 @@ def verify_node(state: SupportState) -> SupportState:
         "verification_reason": reason,
         "confidence": confidence,
     }
+
 def final_response_node(state: SupportState) -> SupportState:
     """Prepare the final structured response."""
 
+    classification = state.get("classification", "")
+    answer = state.get("answer", "")
+
+    sources = []
+
+    for source in state.get("sources", []):
+        sources.append(
+            {
+                "document": source.get(
+                    "filename",
+                    "unknown",
+                ),
+                "passage": source.get(
+                    "excerpt",
+                    "",
+                ),
+            }
+        )
+
     return {
         **state,
+        "classification": classification,
+        "answer": answer,
+        "sources": sources,
+        "confidence": state.get("confidence", 0.0),
         "requires_human": state.get("requires_human", False),
-        "reason": state.get(
+         "reason": state.get(
             "reason",
-            state.get("verification_reason", ""),
+            state.get(
+                "verification_reason",
+                "",
+            ),
         ),
-        "warnings": state.get("warnings", []),
     }
+    

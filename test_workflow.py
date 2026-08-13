@@ -39,5 +39,27 @@ print(result.get("reason"))
 print("\nSources:")
 
 for source in result.get("sources", []):
-    print("\nFile:", source["filename"])
-    print("Excerpt:", source["excerpt"])
+ print("\nFile:", source.get("filename", "Unknown"))
+ print("Excerpt:", source.get("excerpt", ""))
+ 
+import json
+final_output = {
+    "classification": result.get("classification"),
+    "answer": result.get("answer"),
+    "sources": result.get("sources", []),
+    "confidence": result.get("confidence", 0.0),
+    "requires_human": result.get("requires_human", False),
+    "reason": result.get("reason", ""),
+}
+
+print("\n" + "=" * 60)
+print("FINAL STRUCTURED OUTPUT")
+print("=" * 60)
+
+print(
+    json.dumps(
+        final_output,
+        indent=2,
+        ensure_ascii=False,
+    )
+)

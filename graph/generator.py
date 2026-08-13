@@ -9,7 +9,9 @@ class LocalGenerator:
     def __init__(self):
         print("Loading local language model...")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_NAME
+        )
 
         self.model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
@@ -30,27 +32,40 @@ class LocalGenerator:
 
         for document in documents:
             context_parts.append(
-                f"Source: {document['source']}\n"
+                f"[SOURCE: {document['source']}]\n"
                 f"{document['content']}"
             )
 
         context = "\n\n".join(context_parts)
 
-        prompt = f"""You are an OrbitDesk support assistant.
+        prompt = f"""You are a careful OrbitDesk support assistant.
 
-Answer the user's question using ONLY the provided knowledge-base
-context.
+You must answer the user's question using ONLY the
+knowledge-base context provided below.
 
-If the context does not contain enough information to answer,
-say that you do not have enough information.
+IMPORTANT RULES:
 
-User question:
+1. Do not use outside knowledge.
+2. Do not invent permissions, steps, or product behavior.
+3. Pay close attention to words such as:
+   "only", "cannot", "not allowed", and "must".
+4. If the context says only certain roles can perform
+   an action, do not say that other roles can perform it.
+5. Answer the user's exact question directly.
+6. Keep the answer concise.
+7. Do not add unsupported advice.
+8. If the context does not contain enough information,
+   say that you do not have enough information.
+
+USER QUESTION:
 {question}
 
-Knowledge-base context:
+KNOWLEDGE-BASE CONTEXT:
 {context}
 
-Answer:
+Check that your answer agrees with the context.
+
+FINAL ANSWER:
 """
 
         inputs = self.tokenizer(
@@ -63,11 +78,14 @@ Answer:
         with torch.no_grad():
             output = self.model.generate(
                 **inputs,
-                max_new_tokens=200,
+                max_new_tokens=160,
                 do_sample=False,
+                pad_token_id=self.tokenizer.eos_token_id,
             )
 
-        generated_tokens = output[0][inputs["input_ids"].shape[1]:]
+        generated_tokens = output[0][
+            inputs["input_ids"].shape[1]:
+        ]
 
         answer = self.tokenizer.decode(
             generated_tokens,
